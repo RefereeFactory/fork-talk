@@ -9,7 +9,7 @@
   body{background:#0a0a0c;color:#eee;font-family:-apple-system,sans-serif;margin:0;padding:20px;text-align:center;}
   h1{color:#f0a500;font-size:18px;letter-spacing:2px;margin-bottom:2px;}
   .stage{display:inline-block;position:relative;margin-top:10px;}
-  canvas{position:absolute;left:0;top:0;width:380px;height:100%;pointer-events:none;}
+  canvas{position:absolute;left:0;top:0;pointer-events:none;}
   .row{margin:12px auto;max-width:560px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;align-items:center;}
   input[type=text]{flex:1;min-width:220px;padding:10px;background:#141418;border:1px solid #2c2c33;border-radius:8px;color:#eee;}
   button{padding:10px 16px;background:#1a1408;border:1px solid #f0a500;color:#f0a500;border-radius:8px;font-weight:700;cursor:pointer;}
@@ -37,7 +37,7 @@ own stack — no rented avatar service.</div>
   <div id="card" style="overflow:hidden;border-radius:16px;background:#f4f4f6;">
     <div id="breather" style="transform-origin:50% 100%;animation:breathe 4.6s ease-in-out infinite;position:relative;">
       <div id="swayer" style="transform-origin:50% 100%;position:relative;">
-        <img id="stillImg" src="still.png" style="width:380px;display:block;">
+        <img id="stillImg" src="still.png" style="width:380px;max-width:92vw;display:block;">
         <canvas id="lips"></canvas>
       </div>
     </div>
@@ -197,7 +197,9 @@ const BLINK_SEQ=[0,1,1,2];
 })();
 function fit(){
   const w=still.clientWidth, h=still.clientHeight;
-  cv.width=w; cv.height=h; cv.style.height=h+'px';
+  if(!w||!h) return;
+  cv.width=w; cv.height=h;
+  cv.style.width=w+'px'; cv.style.height=h+'px';
 }
 window.addEventListener('resize',fit);
 function drawSprite(name, alpha, X, Y, W, H){
@@ -210,6 +212,7 @@ function drawSprite(name, alpha, X, Y, W, H){
 }
 function draw(){
   requestAnimationFrame(draw);
+  if(still.clientWidth&&cv.width!==still.clientWidth) fit();   // self-heal after slow image load
   if(!cv.width) return;
   cx.clearRect(0,0,cv.width,cv.height);
   if(!meta) return;
@@ -234,28 +237,32 @@ function draw(){
 }
 draw();
 
-// ---------- speech output: one sentence at a time, lips on the letter clock ----------
-function speakLine(text){
+// ---------- speech output: PARALLEL fetch, ORDERED playback — no gaps between sentences ----------
+function fetchVoice(text){
+  return fetch(SB+'/functions/v1/voice-speak',{method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+ANON},
+    body:JSON.stringify({text:text,format:'timed'})})
+    .then(function(r){return r.json();}).catch(function(){return null;});
+}
+function playFetched(audioPromise,text){
   return new Promise(async function(resolve){
-    try{
-      const r=await fetch(SB+'/functions/v1/voice-speak',{method:'POST',
-        headers:{'Content-Type':'application/json','Authorization':'Bearer '+ANON},
-        body:JSON.stringify({text:text,format:'timed'})});
-      const d=await r.json();
-      if(!d.audioB64){ st('Voice unavailable — the engineer says: '+text); resolve(); return; }
-      const a=d.alignment||{};
-      segs=buildSchedule(a.characters||[], a.character_start_times_seconds||[], a.character_end_times_seconds||[]);
-      audioEl=new Audio('data:audio/mpeg;base64,'+d.audioB64);
-      playing=true; micMuted=true;
-      audioEl.onended=function(){ playing=false; micMuted=false; resolve(); };
-      audioEl.onerror=function(){ playing=false; micMuted=false; resolve(); };
-      audioEl.play();
-    }catch(_){ playing=false; micMuted=false; resolve(); }
+    const d=await audioPromise;
+    if(!d||!d.audioB64){ st('Voice unavailable — the engineer says: '+text); resolve(); return; }
+    const a=d.alignment||{};
+    segs=buildSchedule(a.characters||[], a.character_start_times_seconds||[], a.character_end_times_seconds||[]);
+    audioEl=new Audio('data:audio/mpeg;base64,'+d.audioB64);
+    playing=true; micMuted=true;
+    audioEl.onended=function(){ playing=false; micMuted=false; resolve(); };
+    audioEl.onerror=function(){ playing=false; micMuted=false; resolve(); };
+    audioEl.play().catch(function(){ playing=false; micMuted=false; resolve(); });
   });
 }
-// sequential queue so sentences never talk over each other
 let speechQueue=Promise.resolve();
-function enqueueLine(text){ speechQueue=speechQueue.then(function(){ return speakLine(text); }); return speechQueue; }
+function enqueueLine(text){
+  const audioPromise=fetchVoice(text);                 // network starts NOW, in parallel
+  speechQueue=speechQueue.then(function(){ return playFetched(audioPromise,text); });
+  return speechQueue;
+}
 
 // ---------- sign-in (needed only to BUILD; talking is open) ----------
 let sbClient=null, session=null;
