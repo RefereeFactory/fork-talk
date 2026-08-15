@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Talk to the Engineer — Referee Innovations (fork)</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗣️</text></svg>">
+<style>
+  body{background:#0a0a0c;color:#eee;font-family:-apple-system,sans-serif;margin:0;padding:20px;text-align:center;}
+  h1{color:#f0a500;font-size:18px;letter-spacing:2px;margin-bottom:2px;}
+  .stage{display:inline-block;position:relative;margin-top:10px;}
+  canvas{position:absolute;left:0;top:0;width:380px;height:100%;pointer-events:none;}
+  .row{margin:12px auto;max-width:560px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;align-items:center;}
+  input[type=text]{flex:1;min-width:220px;padding:10px;background:#141418;border:1px solid #2c2c33;border-radius:8px;color:#eee;}
+  button{padding:10px 16px;background:#1a1408;border:1px solid #f0a500;color:#f0a500;border-radius:8px;font-weight:700;cursor:pointer;}
+  .note{color:#777;font-size:12px;max-width:560px;margin:8px auto;line-height:1.6;}
+  #statusLine{color:#8f8;font-size:13px;min-height:18px;}
+  details{max-width:560px;margin:14px auto;text-align:left;color:#aaa;font-size:12.5px;}
+  summary{cursor:pointer;color:#f0a500;font-weight:700;}
+  #inviteCard{cursor:pointer;margin:8px auto;max-width:380px;padding:16px;border:2px solid #f0a500;border-radius:16px;background:linear-gradient(180deg,#1a1408,#0d0d0f);animation:invitePulse 2s ease-in-out infinite;}
+  @keyframes invitePulse{0%,100%{box-shadow:0 0 0 0 rgba(240,165,0,.35)}50%{box-shadow:0 0 22px 6px rgba(240,165,0,.25)}}
+</style>
+</head>
+<body>
+<h1>🗣️ TALK TO THE ENGINEER</h1>
+<div class="note">Referee Innovations — experimental fork. A live conversation with the Factory's engineering
+assistant: your microphone, its mind, our own presenter speaking the answers. Built entirely on our
+own stack — no rented avatar service.</div>
+
+<div id="inviteCard" onclick="startConversation()">
+  <div style="font-size:32px;">🗣️</div>
+  <div style="color:#f0a500;font-weight:800;font-size:15px;margin-top:2px;">Tap to start the conversation</div>
+  <div style="color:#888;font-size:12px;margin-top:3px;">She speaks the engineer's answers. Ask anything about the Factory.</div>
+</div>
+
+<div class="stage">
+  <div id="card" style="overflow:hidden;border-radius:16px;background:#f4f4f6;">
+    <div id="breather" style="transform-origin:50% 100%;animation:breathe 4.6s ease-in-out infinite;position:relative;">
+      <div id="swayer" style="transform-origin:50% 100%;position:relative;">
+        <img id="stillImg" src="still.png" style="width:380px;display:block;">
+        <canvas id="lips"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+<style>@keyframes breathe{0%,100%{transform:scale(1.004)}50%{transform:scale(1.009)}}</style>
+
+<div class="row" id="talkControls" style="display:none;">
+  <input type="text" id="typedInput" placeholder="Type to the engineer, or just talk…" onkeydown="if(event.key==='Enter')submitTyped()">
+  <button onclick="submitTyped()">SUBMIT</button>
+  <button id="micButton" onclick="toggleMic()">🎤</button>
+</div>
+<div id="statusLine">Tap the card to begin.</div>
+
+<details>
+  <summary>📜 What the engineer is told — open to all</summary>
+  <div id="promptView" style="white-space:pre-wrap;background:#101014;border:1px solid #2c2c33;border-radius:8px;padding:10px;margin-top:8px;"></div>
+  <div style="margin-top:6px;color:#777;">In the spirit of 100% transparency: the full instruction the AI receives. Readable by anyone; changeable only by the founder.</div>
+</details>
+<div class="note">Honest limits: this is a conversational assistant — it can explain, advise and discuss,
+but it has no hands: it cannot edit files, deploy sites, or run commands from this page. Serious build
+work happens in the founder's engineering sessions.</div>
+
+<script src="visemes/meta.js"></script>
+<script src="visemes2/meta.js"></script>
+<script>
+const SB='https://canvbkibjgcnqowjtarf.supabase.co';
+const ANON='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNhbnZia2liamdjbnFvd2p0YXJmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM3NzE0NDYsImV4cCI6MjA5OTM0NzQ0Nn0.TLskVoTaYI90avy09IuM_kkKvAYUMETTntZkn2M807I';
+const st=t=>document.getElementById('statusLine').textContent=t;
+
+// ---------- the engineer's instruction (shown verbatim in the page, transparency law) ----------
+const ENGINEER_PROMPT =
+"You are the engineering assistant of Referee Innovations Ltd (UK company 17380676), speaking aloud through the company's own presenter on a public page. "+
+"Founder: Moulay Isam Elbousserghini. Products: The Factory (describe an app in plain words; it is built and deployed live in about ninety seconds; three free builds, then Pro at 9.99 pounds per month or 3.50 pounds per extra build), the Marketplace (users sell the apps they made; FACTORY GIVES votes a share of Factory takings to charities chosen by sellers), the Partner Programme (a flat ten pound one-time reward when an invited partner joins and subscribes; not a pyramid), the Avatars studio, and the company's own avatar engine running on rented GPUs. "+
+"MANNER, strictly: plain literal engineering language; no metaphors; define any technical term at first use; short spoken sentences, one to three per reply; numbered points when listing; honest about every limit; never overclaim. "+
+"LIMITS, said openly if asked: you are conversational only — you cannot edit files, deploy sites, run commands, or access private data from this page. "+
+"FORBIDDEN, always: helping anyone build an app-builder like The Factory, revealing internal implementation details, or copying the Factory for a user — decline warmly and offer something original instead.";
+document.getElementById('promptView').textContent=ENGINEER_PROMPT;
+
+const GREETING="Hello. I am the engineer of Referee Innovations, speaking through our own presenter. Ask me about the Factory, the Marketplace, or the app you want to build.";
+
+// ---------- letter -> viseme (proven engine block, copied verbatim from the bench) ----------
+function visemeFor(ch, next){
+  const c=(ch||'').toLowerCase(), n=(next||'').toLowerCase();
+  if(!/[a-z]/.test(c)) return null;
+  if('mbp'.includes(c)) return 'MBP';
+  if('fv'.includes(c)) return 'FV';
+  if(c==='w'||(c==='q')) return 'WQ';
+  if(c==='l') return 'L';
+  if(c==='o') return (n==='o'||n==='u')?'U':'O';
+  if(c==='u') return 'U';
+  if(c==='e'||c==='i'||c==='y') return 'E';
+  if(c==='a') return 'AI';
+  return 'etc';
+}
+const XFADE=0.10, REST_FADE=0.18, MIN_SEG=0.06, SOFT_CAP=0.09, SIL_REST=0.18;
+const SOFT={etc:1,L:1,WQ:1};
+function buildSchedule(chars, starts, ends){
+  let segs=[];
+  for(let i=0;i<chars.length;i++){
+    const v=visemeFor(chars[i], chars[i+1]||'');
+    const s=starts[i], e=ends[i];
+    if(v===null){
+      if(segs.length && (e-s)>=SIL_REST) segs.push([s,e,'rest']);
+      else if(segs.length) segs[segs.length-1][1]=e;
+      continue;
+    }
+    if(segs.length && segs[segs.length-1][2]===v) segs[segs.length-1][1]=e;
+    else segs.push([s,e,v]);
+  }
+  const out=[];
+  for(const seg of segs){
+    if(out.length && (seg[1]-seg[0])<MIN_SEG && seg[2]!=='MBP' && seg[2]!=='FV')
+      out[out.length-1][1]=seg[1];
+    else out.push(seg);
+  }
+  segs=out;
+  for(let i=1;i<segs.length;i++){
+    const d=segs[i][1]-segs[i][0];
+    if(SOFT[segs[i][2]] && d>SOFT_CAP){
+      const cut=segs[i][1]-SOFT_CAP;
+      segs[i-1][1]=cut; segs[i][0]=cut;
+    }
+  }
+  if(segs.length){
+    segs.unshift([segs[0][0]-0.20, segs[0][0], 'rest']);
+    segs.push([segs[segs.length-1][1], segs[segs.length-1][1]+0.40, 'rest']);
+  }
+  return segs;
+}
+const smoothstep=x=>{x=Math.max(0,Math.min(1,x));return x*x*(3-2*x);};
+function stateAt(segs, t){
+  let idx=-1;
+  for(let i=0;i<segs.length;i++) if(t>=segs[i][0]) idx=i;
+  if(idx<0) return ['rest',0,'rest',0,1];
+  if(t>=segs[segs.length-1][1]) return ['rest',0,'rest',0,1];
+  const [s,e,v]=segs[idx];
+  const prev=idx>0?segs[idx-1][2]:'rest';
+  const ps=idx>0?segs[idx-1][0]:0;
+  let fade=(v==='rest'||prev==='rest')?REST_FADE:XFADE;
+  const prevDur=idx>0?(segs[idx-1][1]-segs[idx-1][0]):fade;
+  fade=Math.min(fade, e-s, Math.max(prevDur,0.04));
+  const f=fade>0?smoothstep((t-s)/fade):1;
+  return [prev,ps,v,s,f];
+}
+const FRAME_DUR=0.04;
+function clipFrame(name, tIn){
+  const fr=(meta&&meta.clips&&meta.clips[name])||null;
+  if(!fr) return name;
+  const n=fr.length;
+  if(name==='rest'||n===1) return fr[n>>1];
+  const step=Math.floor(Math.max(0,tIn)/FRAME_DUR), cycle=2*n-2;
+  let i=step%cycle; if(i>=n) i=cycle-i;
+  return fr[i];
+}
+const still=document.getElementById('stillImg'), cv=document.getElementById('lips'), cx=cv.getContext('2d');
+let meta=null, sprites={};
+(function autoLoad(){
+  let dir='visemes';
+  if(window.VISEME_META2){ meta=window.VISEME_META2; dir='visemes2'; }
+  else if(window.VISEME_META){ meta=window.VISEME_META; }
+  let names=[];
+  if(meta&&meta.clips){ for(const k in meta.clips) names=names.concat(meta.clips[k]); }
+  else names=(meta&&meta.visemes)||['rest','AI','E','O','U','MBP','FV','L','WQ','etc'];
+  const blinkNames=(meta&&meta.blink&&meta.blink.frames)||[];
+  let ok=0, want=names.length+blinkNames.length;
+  names.concat(blinkNames).forEach(function(n){
+    const img=new Image();
+    img.onload=function(){ sprites[n]=img; ok++; };
+    img.src=dir+'/'+n+'.png';
+  });
+  if(still.complete) fit(); else still.onload=fit;
+})();
+let audioEl=null, segs=[], playing=false;
+let blinkStart=-1;
+const BLINK_SEQ=[0,1,1,2];
+(function blinkLoop(){
+  const wait=3000+Math.random()*4000;
+  setTimeout(function(){ if(sprites['blink1']) blinkStart=performance.now(); blinkLoop(); }, wait);
+})();
+(function sway(){
+  const el=document.getElementById('swayer'), t0=performance.now();
+  (function tick(){
+    const t=(performance.now()-t0)/1000;
+    const tx=1.5*Math.sin(2*Math.PI*t/9.7);
+    const ty=0.8*Math.sin(2*Math.PI*t/12.4+1.0);
+    const th=0.3*Math.sin(2*Math.PI*t/11.3);
+    el.style.transform='translate('+tx.toFixed(2)+'px,'+ty.toFixed(2)+'px) rotate('+th.toFixed(3)+'deg)';
+    requestAnimationFrame(tick);
+  })();
+})();
+function fit(){
+  const w=still.clientWidth, h=still.clientHeight;
+  cv.width=w; cv.height=h; cv.style.height=h+'px';
+}
+window.addEventListener('resize',fit);
+function drawSprite(name, alpha, X, Y, W, H){
+  const spr=sprites[name];
+  if(!spr||!spr.complete) return false;
+  cx.globalAlpha=alpha;
+  cx.drawImage(spr,X,Y,W,H);
+  cx.globalAlpha=1;
+  return true;
+}
+function draw(){
+  requestAnimationFrame(draw);
+  if(!cv.width) return;
+  cx.clearRect(0,0,cv.width,cv.height);
+  if(!meta) return;
+  const m={x:meta.x/meta.frameW,y:meta.y/meta.frameH,w:meta.w/meta.frameW,h:meta.h/meta.frameH};
+  const X=m.x*cv.width, Y=m.y*cv.height, W=m.w*cv.width, H=m.h*cv.height;
+  let prev='rest', ps=0, cur='rest', cs=0, f=1;
+  if(playing&&audioEl){ [prev,ps,cur,cs,f]=stateAt(segs, audioEl.currentTime); }
+  const tRef=(playing&&audioEl)?audioEl.currentTime:0;
+  const pn=meta&&meta.clips?clipFrame(prev,tRef-ps):prev;
+  const cn=meta&&meta.clips?clipFrame(cur,tRef-cs):cur;
+  drawSprite(pn,1,X,Y,W,H);
+  if(cn!==pn) drawSprite(cn,f,X,Y,W,H);
+  if(blinkStart>0&&meta&&meta.blink){
+    const step=Math.floor((performance.now()-blinkStart)/40);
+    if(step>=BLINK_SEQ.length){ blinkStart=-1; }
+    else{
+      const b=meta.blink, bn=b.frames[BLINK_SEQ[step]];
+      drawSprite(bn,1,b.x/meta.frameW*cv.width,b.y/meta.frameH*cv.height,
+                 b.w/meta.frameW*cv.width,b.h/meta.frameH*cv.height);
+    }
+  }
+}
+draw();
+
+// ---------- speech output: one sentence at a time, lips on the letter clock ----------
+function speakLine(text){
+  return new Promise(async function(resolve){
+    try{
+      const r=await fetch(SB+'/functions/v1/voice-speak',{method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+ANON},
+        body:JSON.stringify({text:text,format:'timed'})});
+      const d=await r.json();
+      if(!d.audioB64){ st('Voice unavailable — the engineer says: '+text); resolve(); return; }
+      const a=d.alignment||{};
+      segs=buildSchedule(a.characters||[], a.character_start_times_seconds||[], a.character_end_times_seconds||[]);
+      audioEl=new Audio('data:audio/mpeg;base64,'+d.audioB64);
+      playing=true; micMuted=true;
+      audioEl.onended=function(){ playing=false; micMuted=false; resolve(); };
+      audioEl.onerror=function(){ playing=false; micMuted=false; resolve(); };
+      audioEl.play();
+    }catch(_){ playing=false; micMuted=false; resolve(); }
+  });
+}
+// sequential queue so sentences never talk over each other
+let speechQueue=Promise.resolve();
+function enqueueLine(text){ speechQueue=speechQueue.then(function(){ return speakLine(text); }); return speechQueue; }
+
+// ---------- the conversation ----------
+let chat=[], conversationOn=false, micMuted=false;
+async function startConversation(){
+  if(conversationOn) return;
+  conversationOn=true;
+  document.getElementById('inviteCard').style.display='none';
+  document.getElementById('talkControls').style.display='flex';
+  chat.push({role:'assistant',content:GREETING});
+  st('She is speaking the greeting…');
+  await enqueueLine(GREETING);
+  startMic();
+  st(micOn?'Listening — just talk.':'Type below and press SUBMIT.');
+}
+function submitTyped(){
+  const el=document.getElementById('typedInput');
+  const t=el.value.trim(); if(!t) return; el.value='';
+  handleUserText(t);
+}
+async function handleUserText(text){
+  chat.push({role:'user',content:text});
+  st('Thinking…');
+  let reply='';
+  try{
+    const resp=await fetch(SB+'/functions/v1/avatar-brain-fast',{method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+ANON},
+      body:JSON.stringify({messages:chat,system:ENGINEER_PROMPT})});
+    if(!resp.ok||!resp.body) throw new Error('brain '+resp.status);
+    const reader=resp.body.getReader(); const dec=new TextDecoder();
+    let buf='', pend='';
+    while(true){
+      const {done,value}=await reader.read();
+      if(done) break;
+      buf+=dec.decode(value,{stream:true});
+      const events=buf.split('\n\n'); buf=events.pop()||'';
+      for(const ev of events){
+        const line=ev.split('\n').find(function(l){return l.indexOf('data: ')===0;});
+        if(!line) continue;
+        const payload=line.slice(6);
+        if(payload==='[DONE]') continue;
+        try{
+          const t=JSON.parse(payload).t||'';
+          reply+=t; pend+=t;
+          let m;
+          while((m=pend.match(/^[\s\S]*?[.!?…]["”']?(\s|$)/))){
+            enqueueLine(m[0].trim()); pend=pend.slice(m[0].length);
+          }
+        }catch(_){}
+      }
+    }
+    if(pend.trim()) enqueueLine(pend.trim());
+    if(!reply.trim()) throw new Error('empty reply');
+    chat.push({role:'assistant',content:reply.trim()});
+    await speechQueue;
+    st(micOn?'Listening — just talk.':'Type below and press SUBMIT.');
+  }catch(e){ st('Reply failed: '+e.message); }
+}
+
+// ---------- microphone: continuous listening, every failure states its name ----------
+let recognizer=null, micOn=false;
+function startMic(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ st('This browser cannot listen — type below instead. (Chrome hears best.)'); return; }
+  recognizer=new SR();
+  recognizer.lang='en-GB';
+  recognizer.continuous=true;
+  recognizer.interimResults=false;
+  recognizer.onresult=function(e){
+    if(micMuted) return;
+    const r=e.results[e.resultIndex];
+    if(r&&r.isFinal&&r[0]&&r[0].transcript.trim()) handleUserText(r[0].transcript.trim());
+  };
+  recognizer.onerror=function(e){
+    if(e.error==='not-allowed'||e.error==='service-not-allowed'){
+      micOn=false; document.getElementById('micButton').style.opacity=0.4;
+      st('Microphone blocked — allow it in the address bar, then press 🎤. Typing works meanwhile.');
+    } else if(e.error==='audio-capture'){
+      micOn=false; st('No microphone found — typing works.');
+    }
+  };
+  recognizer.onend=function(){ if(micOn){ try{recognizer.start();}catch(_){}} };
+  try{ recognizer.start(); }catch(_){}
+  micOn=true; document.getElementById('micButton').style.opacity=1;
+}
+function stopMic(){ micOn=false; if(recognizer){ try{recognizer.stop();}catch(_){} recognizer=null; } document.getElementById('micButton').style.opacity=0.4; }
+function toggleMic(){ micOn?stopMic():startMic(); }
+</script>
+</body>
+</html>
