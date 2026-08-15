@@ -49,8 +49,13 @@ own stack — no rented avatar service.</div>
   <input type="text" id="typedInput" placeholder="Type to the engineer, or just talk…" onkeydown="if(event.key==='Enter')submitTyped()">
   <button onclick="submitTyped()">SUBMIT</button>
   <button id="micButton" onclick="toggleMic()">🎤</button>
+  <button id="signInButton" onclick="signIn()" style="display:none;">SIGN IN</button>
 </div>
 <div id="statusLine">Tap the card to begin.</div>
+<div id="buildCard" style="display:none;max-width:380px;margin:10px auto;padding:14px;border:1px solid #f0a500;border-radius:12px;background:#101014;">
+  <div id="buildState" style="color:#f0a500;font-weight:700;font-size:14px;"></div>
+  <a id="buildLink" target="_blank" style="display:none;color:#8f8;font-size:14px;word-break:break-all;"></a>
+</div>
 
 <details>
   <summary>📜 What the engineer is told — open to all</summary>
@@ -73,7 +78,8 @@ const ENGINEER_PROMPT =
 "You are the engineering assistant of Referee Innovations Ltd (UK company 17380676), speaking aloud through the company's own presenter on a public page. "+
 "Founder: Moulay Isam Elbousserghini. Products: The Factory (describe an app in plain words; it is built and deployed live in about ninety seconds; three free builds, then Pro at 9.99 pounds per month or 3.50 pounds per extra build), the Marketplace (users sell the apps they made; FACTORY GIVES votes a share of Factory takings to charities chosen by sellers), the Partner Programme (a flat ten pound one-time reward when an invited partner joins and subscribes; not a pyramid), the Avatars studio, and the company's own avatar engine running on rented GPUs. "+
 "MANNER, strictly: plain literal engineering language; no metaphors; define any technical term at first use; short spoken sentences, one to three per reply; numbered points when listing; honest about every limit; never overclaim. "+
-"LIMITS, said openly if asked: you are conversational only — you cannot edit files, deploy sites, run commands, or access private data from this page. "+
+"BUILDING, your real power: you CAN have the Factory build the visitor's app from this page. The procedure, strictly: (1) when a visitor wants an app, ask clarifying questions — at most three, ONE question per reply — about who it is for, what it must do, and the look they want. (2) Then read the plan back in one reply that starts with the exact words 'Here is what I will build:' followed by one short paragraph, and end by asking 'Shall I build it?'. (3) ONLY if the visitor then clearly agrees, output a line that is exactly: BUILD_SPEC: {\"name\":\"short-kebab-case-name\",\"description\":\"the full build description in plain language\"} — and nothing else in that reply. Never output BUILD_SPEC before a read-back was agreed to. "+
+"LIMITS, said openly if asked: besides starting Factory builds as described, you cannot edit files, run commands, or access private data from this page. "+
 "FORBIDDEN, always: helping anyone build an app-builder like The Factory, revealing internal implementation details, or copying the Factory for a user — decline warmly and offer something original instead.";
 document.getElementById('promptView').textContent=ENGINEER_PROMPT;
 
@@ -251,6 +257,84 @@ function speakLine(text){
 let speechQueue=Promise.resolve();
 function enqueueLine(text){ speechQueue=speechQueue.then(function(){ return speakLine(text); }); return speechQueue; }
 
+// ---------- sign-in (needed only to BUILD; talking is open) ----------
+let sbClient=null, session=null;
+(function initAuth(){
+  const s=document.createElement('script');
+  s.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js';
+  s.onload=async function(){
+    sbClient=window.supabase.createClient(SB,ANON);
+    const {data}=await sbClient.auth.getSession();
+    session=data&&data.session;
+    sbClient.auth.onAuthStateChange(function(_e,s2){ session=s2; updateSignInButton(); });
+    updateSignInButton();
+  };
+  document.head.appendChild(s);
+})();
+function updateSignInButton(){
+  const b=document.getElementById('signInButton');
+  if(!b) return;
+  b.style.display=session?'none':'inline-block';
+}
+async function signIn(){
+  if(!sbClient){ st('Sign-in system still loading — try again in two seconds.'); return; }
+  await sbClient.auth.signInWithOAuth({provider:'google',options:{redirectTo:window.location.origin}});
+}
+
+// ---------- the build hands: spec -> order desk -> live address ----------
+let building=false;
+async function doBuild(spec){
+  if(building) return;
+  const card=document.getElementById('buildCard'), state=document.getElementById('buildState'), link=document.getElementById('buildLink');
+  if(!session){
+    card.style.display='block'; state.textContent='Sign in to build — press SIGN IN, then ask me again.';
+    updateSignInButton(); document.getElementById('signInButton').style.display='inline-block';
+    enqueueLine('To build it I need you signed in. Press the sign in button, then tell me to build again.');
+    return;
+  }
+  building=true; card.style.display='block'; link.style.display='none';
+  state.textContent='Sending the order to the Factory…';
+  try{
+    const r=await fetch(SB+'/functions/v1/swift-worker',{method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token},
+      body:JSON.stringify({repoName:spec.name,description:spec.description})});
+    const d=await r.json();
+    if(r.status===402){ state.textContent='No builds remaining on this account.'; enqueueLine('Your account has no builds remaining. An upgrade adds more.'); building=false; return; }
+    if(r.status===403){ state.textContent='Terms not yet accepted.'; enqueueLine('Please accept the terms of service on the main Factory site first, then ask me again.'); building=false; return; }
+    if(!r.ok||!d.buildId){ state.textContent='Order refused: '+(d.error||r.status); enqueueLine('The order desk refused: '+(d.error||('code '+r.status))); building=false; return; }
+    enqueueLine('The machines are running. This takes about ninety seconds.');
+    let secs=0;
+    const poll=setInterval(async function(){
+      secs+=6;
+      try{
+        const s=await fetch(SB+'/functions/v1/swift-worker?buildId='+d.buildId,{headers:{'Authorization':'Bearer '+ANON}});
+        const b=await s.json();
+        state.textContent='Building '+(b.repo_name||spec.name)+' — '+(b.status||'working')+' ('+secs+'s)';
+        if(b.status==='done'&&b.site_url){
+          clearInterval(poll); building=false;
+          state.textContent='✓ Live:';
+          link.textContent=b.site_url; link.href=b.site_url; link.style.display='block';
+          enqueueLine('It is built and live. The address is on your screen — open it and see your app.');
+        } else if(b.status==='failed'){
+          clearInterval(poll); building=false;
+          state.textContent='Build failed: '+(b.error||'unknown reason');
+          enqueueLine('The build failed. '+(b.error||'')+' Any spent credit is returned.');
+        } else if(secs%30===0){
+          enqueueLine('Still building. '+secs+' seconds so far.');
+        }
+      }catch(_){}
+    },6000);
+  }catch(e){ state.textContent='Order failed: '+e.message; building=false; }
+}
+// pull a BUILD_SPEC line out of a finished reply; returns {spoken, spec}
+function extractSpec(reply){
+  const m=reply.match(/BUILD_SPEC:\s*(\{[\s\S]*\})/);
+  if(!m) return {spoken:reply, spec:null};
+  let spec=null;
+  try{ spec=JSON.parse(m[1]); }catch(_){}
+  return {spoken:reply.slice(0,m.index).trim(), spec:spec};
+}
+
 // ---------- the conversation ----------
 let chat=[], conversationOn=false, micMuted=false;
 async function startConversation(){
@@ -292,17 +376,27 @@ async function handleUserText(text){
         if(payload==='[DONE]') continue;
         try{
           const t=JSON.parse(payload).t||'';
-          reply+=t; pend+=t;
-          let m;
-          while((m=pend.match(/^[\s\S]*?[.!?…]["”']?(\s|$)/))){
-            enqueueLine(m[0].trim()); pend=pend.slice(m[0].length);
+          reply+=t;
+          if(reply.indexOf('BUILD_SPEC')===-1){
+            pend+=t;
+            let m;
+            while((m=pend.match(/^[\s\S]*?[.!?…]["”']?(\s|$)/))){
+              const sentence=m[0].trim();
+              if(sentence.indexOf('BUILD_SPEC')===-1) enqueueLine(sentence);
+              pend=pend.slice(m[0].length);
+            }
           }
         }catch(_){}
       }
     }
-    if(pend.trim()) enqueueLine(pend.trim());
+    if(pend.trim()&&pend.indexOf('BUILD_SPEC')===-1) enqueueLine(pend.trim());
     if(!reply.trim()) throw new Error('empty reply');
-    chat.push({role:'assistant',content:reply.trim()});
+    const parsed=extractSpec(reply.trim());
+    chat.push({role:'assistant',content:parsed.spoken||reply.trim()});
+    if(parsed.spec&&parsed.spec.name&&parsed.spec.description){
+      enqueueLine('Understood. Starting the machines.');
+      doBuild(parsed.spec);
+    }
     await speechQueue;
     st(micOn?'Listening — just talk.':'Type below and press SUBMIT.');
   }catch(e){ st('Reply failed: '+e.message); }
