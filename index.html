@@ -47,18 +47,21 @@ own stack — no rented avatar service.</div>
 
 <div class="row" id="talkControls" style="display:none;">
   <input type="text" id="typedInput" placeholder="Type to the engineer, or just talk…" onkeydown="if(event.key==='Enter')submitTyped()">
-  <button onclick="submitTyped()">SUBMIT</button>
+  <button onclick="submitTyped()">SEND</button>
   <button id="micButton" onclick="toggleMic()">🎤</button>
   <button id="signInButton" onclick="signIn()" style="display:none;">SIGN IN</button>
 </div>
 <div id="statusLine">Tap the card to begin.</div>
 <div id="buildCard" style="display:none;max-width:380px;margin:10px auto;padding:14px;border:1px solid #f0a500;border-radius:12px;background:#101014;">
   <div id="buildState" style="color:#f0a500;font-weight:700;font-size:14px;"></div>
+  <div id="buildBarTrack" style="display:none;height:8px;background:#26262c;border-radius:4px;margin-top:8px;overflow:hidden;">
+    <div id="buildBarFill" style="height:100%;width:0%;background:linear-gradient(90deg,#f0a500,#ffd977);transition:width .6s;"></div>
+  </div>
   <a id="buildLink" target="_blank" style="display:none;color:#8f8;font-size:14px;word-break:break-all;"></a>
 </div>
 
-<details>
-  <summary>📜 What the engineer is told — open to all</summary>
+<details style="position:fixed;top:10px;right:12px;max-width:340px;z-index:50;background:#0a0a0c;border:1px solid #2c2c33;border-radius:10px;padding:8px 12px;max-height:70vh;overflow-y:auto;">
+  <summary>📜 Her instructions</summary>
   <div id="promptView" style="white-space:pre-wrap;background:#101014;border:1px solid #2c2c33;border-radius:8px;padding:10px;margin-top:8px;"></div>
   <div style="margin-top:6px;color:#777;">In the spirit of 100% transparency: the full instruction the AI receives. Readable by anyone; changeable only by the founder.</div>
 </details>
@@ -99,7 +102,7 @@ function visemeFor(ch, next){
   if(c==='a') return 'AI';
   return 'etc';
 }
-const XFADE=0.10, REST_FADE=0.18, MIN_SEG=0.06, SOFT_CAP=0.09, SIL_REST=0.18;
+const XFADE=0.07, REST_FADE=0.13, MIN_SEG=0.06, SOFT_CAP=0.09, SIL_REST=0.18;
 const SOFT={etc:1,L:1,WQ:1};
 function buildSchedule(chars, starts, ends){
   let segs=[];
@@ -300,6 +303,8 @@ async function doBuild(spec){
     return;
   }
   building=true; card.style.display='block'; link.style.display='none';
+  const barTrack=document.getElementById('buildBarTrack'), barFill=document.getElementById('buildBarFill');
+  barTrack.style.display='block'; barFill.style.width='2%';
   state.textContent='Sending the order to the Factory…';
   try{
     const r=await fetch(SB+'/functions/v1/swift-worker',{method:'POST',
@@ -313,12 +318,14 @@ async function doBuild(spec){
     let secs=0;
     const poll=setInterval(async function(){
       secs+=6;
+      barFill.style.width=Math.min(95, Math.round(secs/90*100))+'%';
       try{
         const s=await fetch(SB+'/functions/v1/swift-worker?buildId='+d.buildId,{headers:{'Authorization':'Bearer '+ANON}});
         const b=await s.json();
         state.textContent='Building '+(b.repo_name||spec.name)+' — '+(b.status||'working')+' ('+secs+'s)';
         if(b.status==='done'&&b.site_url){
           clearInterval(poll); building=false;
+          barFill.style.width='100%';
           state.textContent='✓ Live:';
           link.textContent=b.site_url; link.href=b.site_url; link.style.display='block';
           enqueueLine('It is built and live. The address is on your screen — open it and see your app.');
@@ -353,7 +360,7 @@ async function startConversation(){
   st('She is speaking the greeting…');
   await enqueueLine(GREETING);
   startMic();
-  st(micOn?'Listening — just talk.':'Type below and press SUBMIT.');
+  st(micOn?'Listening — just talk.':'Type below and press SEND.');
 }
 function submitTyped(){
   const el=document.getElementById('typedInput');
@@ -405,7 +412,7 @@ async function handleUserText(text){
       doBuild(parsed.spec);
     }
     await speechQueue;
-    st(micOn?'Listening — just talk.':'Type below and press SUBMIT.');
+    st(micOn?'Listening — just talk.':'Type below and press SEND.');
   }catch(e){ st('Reply failed: '+e.message); }
 }
 
